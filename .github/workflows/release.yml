@@ -1,0 +1,33 @@
+# Build Granny in GitHub Actions and attach the release zip to a DRAFT release (Actions tab -> "Granny release"
+# -> Run workflow). Install that zip on the device, test it, then publish the draft. dry_run: zip and skin previews only,
+# as run artifacts. Uses sd88me/mpc-vst-plugins' reusable workflow, pinned to one commit in both places.
+name: Granny release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version, e.g. 1.0.0
+        required: true
+        default: 1.0.0
+      dry_run:
+        description: Build and package only (no draft release)
+        type: boolean
+        default: false
+
+jobs:
+  vst:
+    uses: sd88me/mpc-vst-plugins/.github/workflows/vst-release.yml@5d4a511e3f564245b1c358f51c47712ce7e937c2
+    permissions: { contents: write }
+    with:
+      tag: granny-v${{ inputs.version }}
+      version: ${{ inputs.version }}
+      tools_ref: 5d4a511e3f564245b1c358f51c47712ce7e937c2
+      vst_dir: .
+      build: bash build.sh
+      host_test: '"$MPC_VST/tools/test_port.sh" vst.json'
+      extra: build/licenses:licenses
+      plugin_id: granny
+      license: LGPL-3.0-or-later
+      about: Granular sampler after the Torso S-4's ideas, built on Omni Sampler - per-voice grain clouds from any Akai, E-mu, Kontakt, SF2, SFZ or WAV instrument, plus a tempo-synced GRAIN FX.
+      dry_run: ${{ inputs.dry_run }}
