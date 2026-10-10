@@ -63,7 +63,7 @@ struct Settings {
     //   pseudo-random pitch pattern of octaves and fifths); detune 0..1 (+-1 semitone at most, random per grain);
     //   reverse 0..1 (share of grains playing backwards); grain_limit = grains for all voices together
     std::atomic<int> engine{0};
-    std::atomic<float> g_position{0.25f}, g_scan{0}, g_size_s{0.12f}, g_density_hz{24}, g_contour{0}, g_spray{0.1f};
+    std::atomic<float> g_position{0}, g_scan{1}, g_size_s{0.12f}, g_density_hz{24}, g_contour{0}, g_spray{0.1f};
     std::atomic<int> g_size_sync{0}, g_rate_sync{0}, g_spray_mode{0}, g_limit{96};
     std::atomic<float> g_stereo{0.3f}, g_pitch{0}, g_pattern{0}, g_detune{0}, g_reverse{0};
     // GRAIN FX: a granular delay on the voices' sum (before drive and reverb), after the S-4's buffer granular idea.

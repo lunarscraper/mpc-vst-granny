@@ -63,7 +63,7 @@ const NumParam NUM_PARAMS[] = {
     {"mod7_src", 4}, {"mod7_dst", 4}, {"mod7_amt", 0},
     {"mod8_src", 1}, {"mod8_dst", 4}, {"mod8_amt", 0},
     // granular engine (GRAIN page)
-    {"engine", 1}, {"g_pos", 25}, {"g_scan", 0}, {"g_size", 53}, {"g_dens", 60}, {"g_size_sync", 0}, {"g_rate_sync", 0},
+    {"engine", 1}, {"g_pos", 0}, {"g_scan", 100}, {"g_size", 53}, {"g_dens", 60}, {"g_size_sync", 0}, {"g_rate_sync", 0},
     {"g_contour", 0}, {"g_spray", 10}, {"g_spray_mode", 0}, {"g_stereo", 30}, {"g_pitch", 0}, {"g_pattern", 0},
     {"g_detune", 0}, {"g_reverse", 0}, {"g_limit", 96},
     // GRAIN FX

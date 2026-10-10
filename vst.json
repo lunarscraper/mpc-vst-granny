@@ -1,36 +1,72 @@
 {
-  "name": "[SEQ] Groove Bank FX",
-  "vendor": "Mission Minnow",
-  "uid": "GrvF",
-  "category": "Sequencer",
-  "so": "groovebank_fx.so",
-  "effect": true,
-  "cc": false,
+  "name": "Granny",
+  "vendor": "lunarscraper",
+  "uid": "Grny",
+  "version": 1000,
+  "so": "granny.so",
+  "params": "params.json",
+  "layout": "layout.conf",
+  "defines": {
+    "MODULE_SUBDIR": "\"granny\"",
+    "HAS_LFO_BPM": 1,
+    "HAS_TRANSPORT": 1,
+    "PARAM_TEXT_MAX": 64
+  },
   "build": {
+    "root": ".",
     "sources": [
-      "src/dsp/grooves.c",
-      "src/host/groovebank_plugin.c",
-      "mpc/schwung_midi_fx.c"
+      "src/plugin.cpp",
+      "src/core/audio.cpp",
+      "src/core/parse.cpp",
+      "src/core/vfs.cpp",
+      "src/formats/akai.cpp",
+      "src/formats/akai_akp.cpp",
+      "src/formats/akai_mpc.cpp",
+      "src/formats/akai_s.cpp",
+      "src/formats/emu.cpp",
+      "src/formats/emu_e1.cpp",
+      "src/formats/emu_e2.cpp",
+      "src/formats/emu_e3.cpp",
+      "src/formats/emu_e4.cpp",
+      "src/formats/emu_emax.cpp",
+      "src/formats/emu_ex.cpp",
+      "src/formats/format.cpp",
+      "src/formats/ni.cpp",
+      "src/formats/ni_container.cpp",
+      "src/formats/ni_kontakt.cpp",
+      "src/formats/ni_maschine.cpp",
+      "src/formats/omni_native.cpp",
+      "src/formats/roland.cpp",
+      "src/formats/sf2.cpp",
+      "src/formats/sfz.cpp",
+      "src/formats/wav.cpp",
+      "src/fs/akai_fs.cpp",
+      "src/fs/emu_fs.cpp",
+      "src/fs/fat.cpp",
+      "src/fs/floppy.cpp",
+      "src/fs/images.cpp",
+      "src/fs/iso9660.cpp",
+      "src/fs/tree.cpp",
+      "src/engine/autoloop.cpp",
+      "src/engine/loader.cpp",
+      "src/engine/sampler.cpp",
+      "src/engine/slicer.cpp",
+      "src/third_party/tinf/tinflate.c",
+      "src/third_party/tinf/tinfzlib.c",
+      "src/third_party/tinf/tinfgzip.c",
+      "src/third_party/tinf/adler32.c",
+      "src/third_party/tinf/crc32.c",
+      "src/glibc_compat.c"
     ],
     "cflags": [
-      "-Impc",
-      "-Impc/host",
+      "-std=gnu++17",
       "-Isrc",
-      "-Isrc/dsp",
-      "-Isrc/host"
+      "-I/mv/wrapper"
     ],
     "libs": [
       "-lm",
-      "-ldl"
+      "-lpthread"
     ]
   },
-  "params": "params.json",
-  "layout": "layout.conf",
-  "art": "html",
-  "defines": {
-    "QLINK_TRAVEL": 1, "SET_IF_CHANGED": 1,
-    "HAS_DISPLAY_REV": 1,
-    "MODULE_DIR": "\"/sdcard/vst/groovebank\"",
-    "MODULE_SUBDIR": "\"groovebank\""
-  }
+  "art": "html"
 }

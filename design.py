@@ -186,8 +186,8 @@ def params():
         add("ltile_%d" % t, "Layer Map %d" % t, min=0, max=15, default=0, display="int", live=True)
     # Granny 1.0: the granular engine, GRAIN FX and the grain window display (plugin.cpp NUM_PARAMS, same units)
     add("engine", "Engine", options=["Sampler", "Granular"], default=1)
-    num("g_pos", "Grain Position", 0, 100, 25, "%")
-    num("g_scan", "Grain Scan", -200, 200, 0, "%")
+    num("g_pos", "Grain Position", 0, 100, 0, "%")
+    num("g_scan", "Grain Scan", -200, 200, 100, "%")
     add("g_size", "Grain Size", min=0, max=100, default=53, dynamic_display=True)
     add("g_dens", "Grain Density", min=0, max=100, default=60, dynamic_display=True)
     add("g_size_sync", "Grain Size Sync", options=DIVS, default=0)
@@ -1327,7 +1327,47 @@ def layout():
     L.append("art file=art/bg_info.png x=0 y=%d w=1280 h=628 fit=stretch" % Y_OFF)
     header_lines(L)
     L.append('qlinks "INFO" = volume,pan,cutoff,resonance,rev_mix,drive,transpose')
-    return "\n".join(L) + "\n"
+    return "\n".join(options_to_enums(L)) + "\n"
+
+
+# segment labels where the option names don't fit their segment (same count and order as the options)
+SHORT_OPTS = {"lfo1_wave": "SINE,TRI,SAW+,SAW-,SQR,S&H,DRIFT", "voice_mode": "POLY,MONO,LEG", "interp": "OFF,LIN,CUBIC",
+              "fx_lock": "OFF,LOCK"}
+
+
+def options_to_enums(lines):
+    """The public mpc-vst-plugins skin builder has no `option` widget (Omni Sampler was built with one that has): each
+    run of `option` lines for one parameter becomes an `enum_h` radio group in the same place, drawn by the builder
+    with the option names. A run must hold every option of its parameter, in order (button i = option i); runs that
+    don't (LAYERS' per-slot LOAD HERE buttons) are left out: BROWSE has that switch as a whole group."""
+    import shlex
+    opts = {p["key"]: p["options"] for p in params()["params"] if "options" in p}
+    out, run = [], []
+
+    def flush():
+        if not run:
+            return
+        key = run[0]["key"]
+        names = [r["option"] for r in run]
+        if names == opts.get(key):
+            xs = [int(r["cx"]) for r in run]
+            sw, sh = int(run[0]["w"]), int(run[0]["h"])
+            short = SHORT_OPTS.get(key.replace("2", "1") if key.startswith("lfo") else key)
+            out.append('enum_h cx=%d cy=%s label="" key=%s sw=%d sh=%d%s' % (round((xs[0] + xs[-1]) / 2), run[0]["cy"], key, sw, sh,
+                                                                        ' options="%s"' % short if short else ""))
+        run.clear()
+
+    for line in lines:
+        if line.startswith("option "):
+            w = dict(t.partition("=")[::2] for t in shlex.split(line)[1:])
+            if run and (w["key"] != run[0]["key"] or w["cy"] != run[0]["cy"]):
+                flush()
+            run.append(w)
+            continue
+        flush()
+        out.append(line)
+    flush()
+    return out
 
 
 CSS = """/* Granny: the renderer draws only controls; panels, labels and the display are art/bg_*.png. */
