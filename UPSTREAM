@@ -1,0 +1,8 @@
+https://github.com/mission-minnow/groovebank
+commit 4edfa2f0a65f953f685e60b5753e725b0e5df7ce 2026-07-24
+vendored 2026-10-01: upstream src/ as src/ + LICENSE;
+mpc/ = steve/tools/midifx adapter (MIDI out via an ALSA port, host transport as MIDI clock) + Schwung host headers + wrapper/engine.h
+2026-10-09: insert-effect build (Groove Bank FX): mpc/schwung_midi_fx.c gains process() (audio through), an ALSA
+MIDI In port, MIDI IN CH, GENRE and CC 20-27; mpc/engine.h updated to the framework's (with process); new uid GrvF.
+2026-10-09 v2: chord source (INTERNAL: ROOT/CHORD/OCTAVE on the plugin; MIDI IN: own port + external USB MIDI devices,
+connected by the plugin), CC 28-30, chord readout; after the Force test (no MIDI track -> plugin routing).
