@@ -1,38 +1,34 @@
-# Build a DRAFT release (tag v<version>) with mpc-vst-plugins' shared workflow: Actions -> "Release (draft)" -> Run
-# workflow. Then install that draft's zip on a device, smoke-test it and publish the draft (mpc-vst-plugins
-# docs/RELEASING.md). dry_run builds the zip and skin previews as run artifacts only.
-# The tools come from saustin2010/mpc-vst-plugins (sd88me's repo plus changes offered to it) until they're merged there:
-# then point uses: and tools_ref at sd88me/mpc-vst-plugins and drop tools_repo.
-# Groove Bank FX: the insert-effect build of saustin2010/mpc-vst-groovebank (same engine, same pinned groove library).
-name: Release (draft)
+# Build Granny in GitHub Actions and attach the release zip to a DRAFT release (Actions tab -> "Granny release"
+# -> Run workflow). Install that zip on the device, test it, then publish the draft. dry_run: zip and skin previews only,
+# as run artifacts. Uses sd88me/mpc-vst-plugins' reusable workflow, pinned to one commit in both places.
+name: Granny release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version, e.g. 1.0.1
+        description: Version, e.g. 1.0.0
         required: true
+        default: 1.0.0
       dry_run:
-        description: Build only (zip + skin previews as run artifacts), no draft release
+        description: Build and package only (no draft release)
         type: boolean
         default: false
 
 jobs:
   vst:
-    uses: saustin2010/mpc-vst-plugins/.github/workflows/vst-release.yml@f210a56b269deb622ce4d62f437ee3ac8567ceaf
-    permissions:
-      contents: write
+    uses: sd88me/mpc-vst-plugins/.github/workflows/vst-release.yml@5d4a511e3f564245b1c358f51c47712ce7e937c2
+    permissions: { contents: write }
     with:
-      tag: v${{ inputs.version }}
+      tag: granny-v${{ inputs.version }}
       version: ${{ inputs.version }}
-      tools_repo: saustin2010/mpc-vst-plugins
-      tools_ref: f210a56b269deb622ce4d62f437ee3ac8567ceaf
+      tools_ref: 5d4a511e3f564245b1c358f51c47712ce7e937c2
       vst_dir: .
-      # its library into library/, shipped as the plugin folder's groovebank/ (MODULE_SUBDIR)
-      build: python3 release/fetch-library.py library && bash "$MPC_VST/tools/build_port.sh" vst.json
-      host_test: 'rm -rf build/groovebank && cp -R library build/groovebank && "$MPC_VST/tools/test_port.sh" vst.json'
-      extra: library:groovebank
-      plugin_id: groove-bank-fx
-      license: MIT
-      about: "Insert effect: retriggers the chord sent to its MIDI In port in a rhythm from a library of genre grooves."
+      build: bash build.sh
+      host_test: '"$MPC_VST/tools/test_port.sh" vst.json'
+      extra: build/licenses:licenses
+      user_data: granny   # the Plugin Library (granny/library) and its settings: kept when a new version is installed
+      plugin_id: granny
+      license: LGPL-3.0-or-later
+      about: Granular sampler after the Torso S-4's ideas, built on Omni Sampler - per-voice grain clouds from any Akai, E-mu, Kontakt, SF2, SFZ or WAV instrument, plus a tempo-synced GRAIN FX.
       dry_run: ${{ inputs.dry_run }}
