@@ -91,6 +91,44 @@ int main(int argc, char **argv) {
                         get(e, inst, "br_loc").c_str());
         }
     }
+    // browser cursor: the data wheel moves br_cursor (one row per click), OPEN opens the row, AUTO LOAD loads on rest
+    {
+        std::string f = argv[1], dir = f.substr(0, f.rfind('/')), base = f.substr(f.rfind('/') + 1);
+        auto wait = [&] { for (int i = 0; i < 1000 && get(e, inst, "br_info") == "Opening..."; i++) std::this_thread::sleep_for(std::chrono::milliseconds(2)); };
+        e->set_param(inst, "br_path", dir.c_str());
+        e->set_param(inst, "br_cursor", "3"); wait();
+        std::printf("cursor 3: %s (lit row 4: %s)\n", get(e, inst, "br_cursor_display").c_str(), get(e, inst, "br_4_on").c_str());
+        e->set_param(inst, "br_cursor", "12"); wait();
+        std::printf("cursor 12: %s, page %s, row 3 text '%s' lit %s\n", get(e, inst, "br_cursor_display").c_str(), get(e, inst, "br_page").c_str(),
+                    get(e, inst, "br_3").c_str(), get(e, inst, "br_3_on").c_str());
+        e->set_param(inst, "br_autoload", "1");
+        int row = -1;   // find the file's row, move the cursor there and let it rest
+        for (int k = 0; k < 400 && row < 0; k++) {
+            e->set_param(inst, "br_cursor", std::to_string(k).c_str()); wait();
+            int r = (k % 10) + 1;
+            std::string t = get(e, inst, ("br_" + std::to_string(r)).c_str());
+            if (t == base || t == "> " + base) row = k;
+            if (get(e, inst, "br_cursor").c_str() != std::to_string(k)) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(700));
+        for (int i = 0; i < 300; i++) { e->render(inst, buf.data(), 128); std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
+        std::printf("auto load at row %d: %s | %s\n", row, get(e, inst, "br_info").c_str(), get(e, inst, "prog_name").c_str());
+        e->set_param(inst, "br_autoload", "0");
+        e->set_param(inst, "br_cursor", "0"); wait();
+        e->set_param(inst, "br_open", "1"); wait();
+        std::printf("open row 1 (..): now in %s\n", get(e, inst, "br_loc").c_str());
+    }
+    {   // LEARN 1ST KEY: the next note-on sets KEY BASE and makes no sound
+        e->set_param(inst, "key_learn", "1");
+        std::string asked = get(e, inst, "slice_active");
+        uint8_t on[3] = {0x90, 41, 100}, off[3] = {0x80, 41, 0};
+        e->midi(inst, on, 3);
+        e->midi(inst, off, 3);
+        std::printf("learn: '%s' -> key_base %s (%s), learning %s\n", asked.c_str(), get(e, inst, "key_base").c_str(),
+                    get(e, inst, "key_base_display").c_str(), get(e, inst, "key_learn").c_str());
+        if (get(e, inst, "key_base") != "41") fails++;
+        e->set_param(inst, "key_base", "36");
+    }
     for (int i = 0; i < 1000 && get(e, inst, "status").compare(0, 10, "Extracting") == 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(5));
     std::printf("after load: %s\n", get(e, inst, "status").c_str());
     // project round trip

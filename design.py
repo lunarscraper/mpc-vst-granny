@@ -226,9 +226,15 @@ def params():
         add("sbrk_%d" % b, "Break Map %d" % b, min=0, max=3, default=0, display="int", live=True)
     for b in range(1, WAVE_BARS + 1):
         add("shit_%d" % b, "Hit Map %d" % b, min=0, max=1, default=0, display="int", live=True)
+    # Granny: the browser cursor (the data wheel or a Q-Link moves it; nudge_pct: one row per wheel click / Q-Link event),
+    # OPEN, and AUTO LOAD (a file or preset loads when the cursor rests on it)
+    add("br_cursor", "Browser Select", min=0, max=999, default=0, display="int", dynamic_display=True, nudge_pct=3, live=True)
+    trigger("br_open", "Browser Open")
+    add("br_autoload", "Auto Load", options=["Manual", "Auto Load"], default=0)
     text("slice_info", "Slice Info")
     text("slice_active", "Slice Playing")
     num("slice_count", "Slices", 1, 64, 16)
+    trigger("key_learn", "Learn Key Base")
     add("slice_by", "Slice By", options=SLICE_BY, default=1)
     # settings an extracted instrument restores reach MPC's controls through the live polling
     for p in P:
@@ -1017,7 +1023,7 @@ def bg_slice():
     panel(c, 16, 378, 1248, 242)
     knob_label(c, 260, 398, "KEY MODE")
     knob_label(c, 602, 398, "SLICE BY")
-    knob_label(c, 900, 398, "BREAKS BY")
+    knob_label(c, 880, 398, "BREAKS BY")
     knob_label(c, 1100, 470, "POSITION KEYS")
     knob_label(c, 1100, 546, "SCAN FIT")
     for cx, cy, r, key, label, col in SL_KNOBS:
@@ -1067,8 +1073,9 @@ def slice_layout(L):
     for i, opt in enumerate(BREAK_BY):
         n = opt_name("break_by", opt)
         L.append('option cx=%d cy=%d w=76 h=32 key=break_by option="%s" label="" img=art/%s_off.png img_on=art/%s_on.png'
-                 % (740 + i * 80, y(426), opt, n, n))
+                 % (712 + i * 80, y(426), opt, n, n))
     L.append('popup cx=1100 cy=%d w=150 h=34 label="" key=scan_fit text_size=16' % y(574))
+    L.append('button cx=1182 cy=%d label="" key=key_learn img=art/b_learn_off.png img_on=art/b_learn_on.png w=150 h=40' % y(426))
     for cx, cy, r, key, _, col in SL_KNOBS:
         L.append(knob_line(cx, cy, r, key, col, 104) + " bw=104")
     for i, opt in enumerate(KEY_COUNTS):
@@ -1131,6 +1138,8 @@ def images():
                 seg_image(opt_name("lfo%d_retrig" % (i + 1), opt), 92, 32, lit, opt.upper())
         button_image("b_extract", 220, 40, "SAVE TO LIBRARY", lit)
         button_image("b_setlib", 220, 40, "SET LIBRARY HERE", lit)
+        button_image("b_open", 200, 34, "OPEN / LOAD", lit, ORANGE)
+        button_image("b_learn", 150, 40, "LEARN 1ST KEY", lit, ORANGE, 13)
         button_image("b_split", 160, 36, "AUTO SPLIT", lit)
         button_image("b_clear", 160, 36, "CLEAR SLOT", lit)
         for i in range(4):
@@ -1253,15 +1262,20 @@ def layout():
     L.append('readout cx=%d cy=%d w=%d h=34 label="" key=br_loc text_size=17' % (x + w // 2, y(yy + 29), w - 40))
     L.append('list x=%d y=%d w=%d h=%d cols=1 rows=%d th=40 gap=4 key=br' % (x + 14, y(yy + 56), w - 28, BROWSER_ROWS * 44 - 4, BROWSER_ROWS))
     by = yy + h - 29
-    L.append('button cx=%d cy=%d label="" key=br_prev img=art/pg_prev_off.png img_on=art/pg_prev_on.png w=70 h=34' % (x + 60, y(by)))
-    L.append('readout cx=%d cy=%d w=160 h=30 label="" key=br_page text_size=16' % (x + w // 2, y(by)))
-    L.append('button cx=%d cy=%d label="" key=br_next img=art/pg_next_off.png img_on=art/pg_next_on.png w=70 h=34' % (x + w - 60, y(by)))
+    L.append('button cx=%d cy=%d label="" key=br_prev img=art/pg_prev_off.png img_on=art/pg_prev_on.png w=70 h=34' % (x + 54, y(by)))
+    L.append('readout cx=%d cy=%d w=96 h=30 label="" key=br_page text_size=15' % (x + 144, y(by)))
+    L.append('button cx=%d cy=%d label="" key=br_next img=art/pg_next_off.png img_on=art/pg_next_on.png w=70 h=34' % (x + 234, y(by)))
+    # the cursor: a small knob the data wheel turns once it has focus (tap it), its row count, and OPEN
+    L.append('knob cx=%d cy=%d r=16 key=br_cursor label="" name=hide value=hide strip=art/%s.png width=44' % (x + 340, y(by), KNOB_STRIPS[ORANGE]))
+    L.append('readout cx=%d cy=%d w=110 h=30 label="" key=br_cursor text_size=15' % (x + 428, y(by)))
+    L.append('button cx=%d cy=%d label="" key=br_open img=art/b_open_off.png img_on=art/b_open_on.png w=200 h=34' % (x + w - 118, y(by)))
     x, yy, w, h = BR_SIDE
     for i, key in enumerate(("drives", "library", "up", "refresh")):
         cx = x + 128 + (i % 2) * 240
         cy = yy + 64 + (i // 2) * 46
         L.append('button cx=%d cy=%d label="" key=br_%s img=art/b_%s_off.png img_on=art/b_%s_on.png w=220 h=40' % (cx, y(cy), key, key, key))
     L.append('button cx=%d cy=%d label="" key=br_setlib img=art/b_setlib_off.png img_on=art/b_setlib_on.png w=220 h=40' % (x + 128, y(yy + 156)))
+    L.append('enum_h cx=%d cy=%d label="" key=br_autoload sw=108 sh=40 options="MANUAL,AUTO LOAD"' % (x + 368, y(yy + 156)))
     L.append('readout cx=%d cy=%d w=%d h=24 label="" key=lib_path text_size=12' % (x + w // 2, y(yy + 195), w - 44))
     L.append('readout cx=%d cy=%d w=%d h=58 label="" key=br_info text_size=15' % (x + w // 2, y(yy + 269), w - 52))
     for i in range(4):
@@ -1278,7 +1292,7 @@ def layout():
         n = "set_" + opt_name("auto_extract", opt)
         L.append('option cx=%d cy=%d w=%d h=%d key=auto_extract option="%s" label="" img=art/%s_off.png img_on=art/%s_on.png'
                  % (x + 318 + i * 104, y(yy + 500), 98, 34, opt, n, n))
-    L.append('qlinks "BROWSE" = volume,pan,cutoff,resonance,rev_mix,drive,transpose')
+    L.append('qlinks "BROWSE" = br_cursor,volume,pan,cutoff,resonance,rev_mix,drive,transpose')
     L.append("")
 
     # SETUP
@@ -1331,7 +1345,7 @@ def layout():
 
 
 # segment labels where the option names don't fit their segment (same count and order as the options)
-SHORT_OPTS = {"lfo1_wave": "SINE,TRI,SAW+,SAW-,SQR,S&H,DRIFT", "voice_mode": "POLY,MONO,LEG", "interp": "OFF,LIN,CUBIC",
+SHORT_OPTS = {"lfo1_wave": "SINE,TRI,SAW+,SAW-,SQR,S&H,DRIFT", "voice_mode": "POLY,MONO,LEG", "interp": "OFF,LIN,CUB",
               "fx_lock": "OFF,LOCK"}
 
 
@@ -1371,6 +1385,9 @@ def options_to_enums(lines):
 
 
 CSS = """/* Granny: the renderer draws only controls; panels, labels and the display are art/bg_*.png. */
+/* option segments: text small enough for the narrow ones (PLAY page's POLY / MONO / LEG, LFO waves) */
+:root { --seg-size: 11.5px; }
+.seg-tx { letter-spacing: 0.02em; }
 .box, .box-label { display: none; }
 /* pad numbers on the pad images */
 .btn-label, .button-label { font-weight: 700; }

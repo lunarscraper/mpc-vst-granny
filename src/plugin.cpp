@@ -45,7 +45,7 @@ const NumParam NUM_PARAMS[] = {
     {"attack", 0}, {"decay", 100}, {"sustain", 100}, {"release", 0},
     {"vel_sens", 100}, {"bend", 0}, {"polyphony", 48}, {"voice_mode", 0}, {"glide", 0}, {"interp", 2},
     {"rev_mix", 0}, {"rev_size", 60}, {"rev_damp", 40}, {"drive", 0},
-    {"mem_limit", 512}, {"prog_change", 1}, {"auto_extract", 1},
+    {"mem_limit", 512}, {"prog_change", 1}, {"auto_extract", 1}, {"br_autoload", 0},
     {"target_slot", 0}, {"layer_mode", 0}, {"ks_base", 24}, {"auto_loop", 0},
     {"slot1_lo", 0}, {"slot1_hi", 127}, {"slot1_vol", 0}, {"slot1_tune", 0}, {"slot1_mute", 0},
     {"slot2_lo", 0}, {"slot2_hi", 127}, {"slot2_vol", 0}, {"slot2_tune", 0}, {"slot2_mute", 0},
@@ -103,6 +103,14 @@ struct Omni {
     std::string slice_info, slice_active;         // non-empty: listing the presets of this file
     std::vector<Row> rows;
     int page = 0;
+    // the browser cursor (row index in rows): the data wheel / a Q-Link moves it (br_cursor), OPEN or a tap opens it;
+    // the page follows it. With AUTO LOAD a file or preset loads once the cursor rests on it (auto_due, ms)
+    std::atomic<int> cursor{0}, nrows{0}, auto_row{-1};
+    // what MPC reads back for br_cursor: set at once in set_param (MPC steps the next wheel click from it), clamped to
+    // the list; a list of one row (drives only) leaves it unclamped, so the wrapper's stepping test sees a free range
+    std::atomic<int> cursor_req{0};
+    std::atomic<int> learn{0};   // LEARN 1ST KEY: the next note-on becomes KEY BASE (and makes no sound)
+    std::atomic<int64_t> auto_due{0};
     std::string info_text;           // the last tapped item
     std::string browse_msg;
     std::atomic<int> row_on[ROWS];
@@ -282,22 +290,43 @@ std::string short_path(Omni *o, const std::string &p) {
     return p;
 }
 
+int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// is row i the one loaded (or last tapped)? an extracted instrument counts as its source
+bool row_loaded(Omni *o, const LoadedInfo &li, size_t i) {
+    if (i >= o->rows.size()) return false;
+    const Row &row = o->rows[i];
+    const std::string &lp = li.source.empty() ? li.path : li.source;
+    int lpre = li.source.empty() ? li.preset : li.source_preset;
+    if (row.kind == RowKind::Preset) return (row.path == o->sel_path && row.preset == o->sel_preset) || (row.path == lp && row.preset == lpre);
+    if (row.kind == RowKind::File) return row.path == o->sel_path || row.path == lp;
+    return false;
+}
+
+// the lit row is the cursor (the loaded one is marked "> " in its text); the page follows the cursor
 void rebuild_on(Omni *o) {
-    LoadedInfo li = o->loader.info();
-    for (int r = 0; r < ROWS; r++) {
-        size_t i = size_t(o->page * ROWS + r);
-        int on = 0;
-        if (i < o->rows.size()) {
-            const Row &row = o->rows[i];
-            // the tapped row, or what is loaded (an extracted instrument: its source)
-            const std::string &lp = li.source.empty() ? li.path : li.source;
-            int lpre = li.source.empty() ? li.preset : li.source_preset;
-            if (row.kind == RowKind::Preset) on = (row.path == o->sel_path && row.preset == o->sel_preset) || (row.path == lp && row.preset == lpre);
-            else if (row.kind == RowKind::File) on = row.path == o->sel_path || row.path == lp;
-        }
-        o->row_on[r].store(on);
-    }
+    int n = int(o->rows.size());
+    o->nrows.store(n);
+    int c = std::max(0, std::min(std::max(0, n - 1), o->cursor.load()));
+    o->cursor.store(c);
+    if (n >= 2) o->cursor_req.store(c);
+    o->page = c / ROWS;
+    for (int r = 0; r < ROWS; r++) o->row_on[r].store(o->page * ROWS + r == c && c < n ? 1 : 0);
     o->ui_rev.fetch_add(1);
+}
+
+void set_cursor(Omni *o, int c, bool from_wheel) {
+    o->cursor.store(c);
+    rebuild_on(o);
+    o->auto_row.store(-1);
+    if (!from_wheel || num(o, "br_autoload") < 0.5f) return;
+    c = o->cursor.load();
+    if (c < int(o->rows.size()) && (o->rows[size_t(c)].kind == RowKind::File || o->rows[size_t(c)].kind == RowKind::Preset)) {
+        o->auto_due.store(now_ms() + 400);   // load once the cursor rests here
+        o->auto_row.store(c);
+    }
 }
 
 void list_drives(Omni *o) {
@@ -305,6 +334,7 @@ void list_drives(Omni *o) {
     o->dir.clear();
     o->preset_file.clear();
     o->page = 0;
+    o->cursor.store(0);
     o->rows.push_back({"Plugin Library", library_dir(o), RowKind::Drive});
     if (is_dir_host("/sdcard")) o->rows.push_back({"Internal", "/sdcard", RowKind::Drive});
     std::vector<DirEntry> media;
@@ -327,6 +357,7 @@ void list_folder(Omni *o, const std::string &dir) {
     o->dir = dir;
     o->preset_file.clear();
     o->page = 0;
+    o->cursor.store(0);
     o->rows.clear();
     o->rows.push_back({"..", path_dir(dir), RowKind::Up});
     for (auto &e : entries) {
@@ -343,6 +374,7 @@ void list_folder(Omni *o, const std::string &dir) {
 void list_presets(Omni *o, const std::string &file, const std::vector<PresetInfo> &presets) {
     o->preset_file = file;
     o->page = 0;
+    o->cursor.store(0);
     o->rows.clear();
     o->rows.push_back({".. " + path_name(file), o->dir, RowKind::Up});
     for (size_t i = 0; i < presets.size(); i++) o->rows.push_back({presets[i].name, file, RowKind::Preset, int(i)});
@@ -353,9 +385,10 @@ void tap_row(Omni *o, int index) {
     if (index < 0 || index >= int(o->rows.size())) return;
     Row row = o->rows[size_t(index)];
     switch (row.kind) {
-    case RowKind::Up:
-        if (!o->preset_file.empty()) { list_folder(o, o->dir); break; }
-        if (o->dir.empty() || o->dir == "/" || row.path.empty()) list_drives(o);
+    case RowKind::Up: {
+        std::string from = o->preset_file.empty() ? o->dir : o->preset_file;
+        if (!o->preset_file.empty()) list_folder(o, o->dir);
+        else if (o->dir.empty() || o->dir == "/" || row.path.empty()) list_drives(o);
         else {
             // leaving a drive root goes back to the drives list
             bool root = false;
@@ -364,7 +397,10 @@ void tap_row(Omni *o, int index) {
                 list_drives(o);
             else list_folder(o, row.path);
         }
+        for (size_t i = 0; i < o->rows.size(); i++)   // the cursor on where we came from
+            if (o->rows[i].path == from && o->rows[i].kind != RowKind::Up) { set_cursor(o, int(i), false); break; }
         break;
+    }
     case RowKind::Drive:
         if (row.path == library_dir(o)) mkdir(row.path.c_str(), 0755);
         list_folder(o, row.path);
@@ -435,7 +471,7 @@ void step_program(Omni *o, int delta) {
 
 bool sound_param(const char *key) {
     static const char *const NOT[] = {"mem_limit", "prog_change", "auto_extract", "pad_vel", "pad_base", "target_slot", "layer_mode",
-                                      "ks_base", "auto_loop", "g_limit"};
+                                      "ks_base", "auto_loop", "g_limit", "br_autoload"};
     for (const char *n : NOT) if (!std::strcmp(key, n)) return false;
     return std::strncmp(key, "slot", 4) != 0;
 }
@@ -652,6 +688,13 @@ void diag_loop(Omni *o) {
     while (!o->diag_quit.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(33));
         update_displays(o);
+        if (o->auto_row.load() >= 0 && now_ms() >= o->auto_due.load()) {
+            std::lock_guard<std::mutex> lock(o->br_qm);
+            o->br_q.emplace_back("autoload", "1");
+            o->br_busy.store(1);
+            o->br_cv.notify_one();
+            o->auto_due.store(INT64_MAX);
+        }
         if (++tick % 30) continue;
         struct stat st;
         if (stat("/sdcard/granny-debug", &st) != 0) continue;
@@ -718,6 +761,12 @@ void midi(void *inst, const uint8_t *msg, int len) {
     Omni *o = static_cast<Omni *>(inst);
     // program change: the n-th preset of the loaded file, loaded by the loader thread (no locks here)
     if (len >= 2 && (msg[0] & 0xF0) == 0xC0) { if (num(o, "prog_change") > 0.5f) o->loader.request_program(msg[1] & 0x7F); return; }
+    if (len >= 3 && (msg[0] & 0xF0) == 0x90 && msg[2] && o->learn.exchange(0)) {
+        o->values[num_index("key_base")].store(float(msg[1] & 0x7F));
+        apply_settings(o);
+        o->ui_rev.fetch_add(1);
+        return;
+    }
     o->sampler.midi(msg, len);
 }
 
@@ -752,6 +801,20 @@ void set_param(void *inst, const char *key, const char *val) {
     }
     if (!std::strcmp(key, "slot_clear")) { if (is_trigger_on(val)) o->loader.request("", 0); return; }
     if (!std::strcmp(key, "auto_split")) { if (is_trigger_on(val)) auto_split(o); return; }
+    if (!std::strcmp(key, "key_learn")) { if (is_trigger_on(val)) { o->learn.store(o->learn.load() ? 0 : 1); o->ui_rev.fetch_add(1); } return; }
+    if (!std::strcmp(key, "br_cursor") || (!std::strcmp(key, "br_open") && is_trigger_on(val))) {
+        if (key[3] == 'c') {
+            int v = std::max(0, int(std::atof(val) + 0.5f)), n = o->nrows.load();
+            if (n >= 2) v = std::min(v, n - 1);
+            o->cursor_req.store(v);
+        }
+        std::lock_guard<std::mutex> lock(o->br_qm);
+        if (o->br_q.size() >= 32) return;
+        o->br_q.emplace_back(key[3] == 'c' ? std::string("cursor=") + std::to_string(int(std::atof(val) + 0.5f)) : std::string("open"), "1");
+        o->br_busy.store(1);
+        o->br_cv.notify_one();
+        return;
+    }
     bool prog = !std::strcmp(key, "prog_prev") || !std::strcmp(key, "prog_next");
     if (!prog && std::strncmp(key, "br_", 3)) return;
     const char *k = prog ? key : key + 3;   // the worker's action: "prog_prev"/"prog_next", or the br_ suffix
@@ -781,12 +844,26 @@ void browse_action(Omni *o, const std::string &key) {
     }
     {
         if (std::isdigit(static_cast<unsigned char>(*k))) {
-            tap_row(o, o->page * ROWS + std::atoi(k) - 1);
+            int i = o->page * ROWS + std::atoi(k) - 1;
+            if (i < int(o->rows.size())) set_cursor(o, i, false);
+            tap_row(o, i);
             return;
         }
-        int pages = std::max(1, (int(o->rows.size()) + ROWS - 1) / ROWS);
-        if (!std::strcmp(k, "prev") && o->page > 0) { o->page--; rebuild_on(o); }
-        else if (!std::strcmp(k, "next") && o->page + 1 < pages) { o->page++; rebuild_on(o); }
+        if (!std::strncmp(k, "cursor=", 7)) { set_cursor(o, std::atoi(k + 7), true); return; }
+        if (!std::strcmp(k, "open")) { tap_row(o, o->cursor.load()); return; }
+        if (!std::strcmp(k, "autoload")) {   // the cursor rested on a file or preset: load it, stay in this list
+            int c = o->auto_row.exchange(-1);
+            if (c < 0 || c != o->cursor.load() || c >= int(o->rows.size())) return;
+            const Row &row = o->rows[size_t(c)];
+            o->sel_path = row.path;
+            o->sel_preset = row.kind == RowKind::Preset ? row.preset : 0;
+            o->loader.request(row.path, o->sel_preset);
+            o->info_text = "Loading " + row.label;
+            rebuild_on(o);
+            return;
+        }
+        if (!std::strcmp(k, "prev")) set_cursor(o, std::max(0, o->cursor.load() - ROWS), false);
+        else if (!std::strcmp(k, "next")) set_cursor(o, std::min(int(o->rows.size()) - 1, o->cursor.load() + ROWS), false);
         else if (!std::strcmp(k, "up")) { if (!o->rows.empty() && o->rows[0].kind == RowKind::Up) tap_row(o, 0); else list_drives(o); }
         else if (!std::strcmp(k, "drives")) list_drives(o);
         else if (!std::strcmp(k, "library")) list_folder(o, library_dir(o));
@@ -881,6 +958,7 @@ int get_param(void *inst, const char *key, char *buf, int len) {
         if (i < 0 || i >= 48) return std::snprintf(buf, size_t(len), "0");
         return std::snprintf(buf, size_t(len), "%d", key[1] == 'b' ? o->disp_sbrk[i].load() : o->disp_shit[i].load());
     }
+    if (!std::strcmp(key, "slice_active") && o->learn.load()) return put(buf, len, "LEARN: press the pad for slice 1");
     if (!std::strcmp(key, "slice_info") || !std::strcmp(key, "slice_active")) {
         std::lock_guard<std::mutex> lock(o->slice_mutex);
         return put(buf, len, key[6] == 'i' ? o->slice_info : o->slice_active);
@@ -890,6 +968,14 @@ int get_param(void *inst, const char *key, char *buf, int len) {
         int r = int(num(o, "region") + 0.5f);
         return r ? std::snprintf(buf, size_t(len), "Break %d", r) : put(buf, len, "All");
     }
+    if (!std::strcmp(key, "br_cursor")) return std::snprintf(buf, size_t(len), "%d", o->cursor_req.load());
+    if (!std::strcmp(key, "key_learn")) return std::snprintf(buf, size_t(len), "%d", o->learn.load());
+    if (!std::strcmp(key, "br_cursor_display")) {
+        int n = o->nrows.load();
+        return n ? std::snprintf(buf, size_t(len), "%d / %d", o->cursor.load() + 1, n) : put(buf, len, "-");
+    }
+    if (!std::strcmp(key, "display_rev"))   // wrapper HAS_DISPLAY_REV: a changed list or load repaints at once
+        return std::snprintf(buf, size_t(len), "%u", unsigned(o->ui_rev.load() + 7919u * o->loader.revision.load()));
     if (!std::strncmp(key, "gwin_", 5) && isdigit((unsigned char)key[5])) {
         int i = std::atoi(key + 5) - 1;
         return std::snprintf(buf, size_t(len), "%d", i >= 0 && i < 48 ? o->disp_gwin[i].load() : 0);
@@ -1016,7 +1102,8 @@ int get_param(void *inst, const char *key, char *buf, int len) {
         const char *k = key + 3;
         if (std::isdigit(static_cast<unsigned char>(*k))) {
             size_t i = size_t(o->page * ROWS + std::atoi(k) - 1);
-            return put(buf, len, i < o->rows.size() ? o->rows[i].label : " ");
+            if (i >= o->rows.size()) return put(buf, len, " ");
+            return put(buf, len, (row_loaded(o, o->loader.info(), i) ? "> " : "") + o->rows[i].label);
         }
         if (!std::strcmp(k, "loc")) {
             if (!o->preset_file.empty()) return put(buf, len, short_path(o, o->preset_file));

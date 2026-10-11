@@ -82,7 +82,7 @@ moves through it).
 | BREAKS BY | AUTO (gaps when the file has several sounds with silence between them, else 4-bar chunks), GAPS (silences of 150 ms or more), 1 / 2 / 4 BARS (chunks of the detected tempo from the first hit, each boundary moved onto the nearest hit) |
 | HIT SENS | how strong an onset must be to count as a hit |
 | REGION | PITCH and POSITIONS modes: 0 = the whole sample, n = only break n |
-| KEY BASE | the first key (default C1 = 36, MPC pad A01) |
+| KEY BASE | the first key (default C1 = 36, MPC pad A01). **LEARN 1ST KEY**: tap it, then press the pad (or key) that should play slice 1 |
 | SCAN FIT | GRANULAR: SCAN plays once through the break in 1/2 ... 8 bars at MPC's tempo (the break follows the song's tempo, the grains keep its pitch); OFF = the SCAN knob's speed |
 
 The display shows the sample with its breaks (blue, a yellow line where one starts, orange the one playing), the hits
@@ -154,6 +154,10 @@ floppies, IMD. Reports and sample files welcome.
   ranges in the slot colours. **Layer Mode** Layer plays every slot whose range holds the key; Keyswitch plays only
   the slot last selected with the four keyswitch notes from **Keyswitch Base** (default C0, 24-27). **AUTO SPLIT**
   divides the keyboard evenly between the loaded slots; **CLEAR SLOT** empties the selected slot.
+- **BROWSE** (Granny): the orange knob under the list is the cursor: tap it once, then the **data wheel** (or the
+  page's first Q-Link) moves the lit row one at a time and the page follows; **OPEN / LOAD** opens the lit folder or
+  loads the lit file. **AUTO LOAD** loads a file or preset as soon as the cursor rests on it (0.4 s), so the wheel
+  alone browses and auditions; folders still open with OPEN. The loaded row is marked `>`.
 - **BROWSE**: drives (Plugin Library, Internal, every USB/SD volume under `/media`), folders, files and disk
   images. Tap a file with several instruments (an SF2 bank, a multi, a disk partition) to list them. The arrows
   next to the instrument name step through the presets of a file, or the files of a folder.
