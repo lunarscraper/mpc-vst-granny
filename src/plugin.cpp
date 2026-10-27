@@ -72,7 +72,12 @@ const NumParam NUM_PARAMS[] = {
     // SLICE page
     {"key_mode", 4}, {"key_base", 36}, {"key_count", 1}, {"break_by", 0}, {"hit_sens", 50}, {"region", 0}, {"scan_fit", 0},
     {"slice_count", 16}, {"slice_by", 1},
+    // BEAT page (the break generator)
+    {"beat_mode", 0}, {"beat_steps", 0}, {"beat_bars", 0}, {"beat_cplx", 30}, {"beat_anchor", 80}, {"beat_roll", 30},
+    {"beat_fill", 60}, {"beat_rt2", 10}, {"beat_rt3", 0}, {"beat_rt4", 10}, {"beat_rt8", 0}, {"beat_phrase", 2},
+    {"beat_b", 0}, {"beat_bchance", 50},
 };
+const int BEAT_STEPS[3] = {8, 16, 32};
 const int KEY_COUNTS[4] = {8, 16, 32, 64};
 constexpr int NUM_COUNT = int(sizeof NUM_PARAMS / sizeof NUM_PARAMS[0]);
 
@@ -249,6 +254,20 @@ void apply_settings(Omni *o) {
     s.scan_fit.store(int(num(o, "scan_fit") + 0.5f));
     s.slice_count.store(std::max(1, std::min(MAX_SLICES, int(num(o, "slice_count") + 0.5f))));
     s.slice_by.store(int(num(o, "slice_by") + 0.5f));
+    s.beat_mode.store(std::max(0, std::min(2, int(num(o, "beat_mode") + 0.5f))));
+    s.beat_steps.store(BEAT_STEPS[std::max(0, std::min(2, int(num(o, "beat_steps") + 0.5f)))]);
+    s.beat_bars.store(std::max(0, std::min(BEAT_BARS_COUNT - 1, int(num(o, "beat_bars") + 0.5f))));
+    s.beat_cplx.store(clamp100(num(o, "beat_cplx")) / 100.0f);
+    s.beat_anchor.store(clamp100(num(o, "beat_anchor")) / 100.0f);
+    s.beat_roll.store(clamp100(num(o, "beat_roll")) / 100.0f);
+    s.beat_fill.store(clamp100(num(o, "beat_fill")) / 100.0f);
+    s.beat_rt[0].store(clamp100(num(o, "beat_rt2")) / 100.0f);
+    s.beat_rt[1].store(clamp100(num(o, "beat_rt3")) / 100.0f);
+    s.beat_rt[2].store(clamp100(num(o, "beat_rt4")) / 100.0f);
+    s.beat_rt[3].store(clamp100(num(o, "beat_rt8")) / 100.0f);
+    s.beat_phrase.store(std::max(0, std::min(BEAT_PHRASE_COUNT - 1, int(num(o, "beat_phrase") + 0.5f))));
+    s.beat_b.store(std::max(0, int(num(o, "beat_b") + 0.5f)));
+    s.beat_bchance.store(clamp100(num(o, "beat_bchance")) / 100.0f);
     s.layer_mode.store(int(num(o, "layer_mode") + 0.5f));
     s.ks_base.store(int(num(o, "ks_base") + 0.5f));
     o->loader.set_target(int(num(o, "target_slot") + 0.5f));
@@ -616,7 +635,21 @@ void update_displays(Omni *o) {
         int nb = 0, nh = 0;
         const bool slices = s.key_mode.load() == 4;
         int64_t ss[MAX_SLICES], se[MAX_SLICES];
-        if (a) {
+        // BEAT running: the strip shows its loop's slices
+        const int bn = o->sampler.beat_ln.load();
+        const bool beat = s.beat_mode.load() != 0 && o->sampler.beat_run.load() && bn > 0 && o->sampler.beat_lzone.load() == zi &&
+                          o->sampler.beat_lprog.load() == m.serial;
+        if (a && beat) {
+            nb = std::min(bn, int(BEAT_MAX_STEPS));
+            for (int k = 0; k < nb; k++) { ss[k] = o->sampler.beat_ls[k].load(); se[k] = o->sampler.beat_ls[k + 1].load(); }
+            for (int k = 0; k < nb; k++) {
+                int b0 = int(double(ss[k] - zs) * 48 / double(zlen)), b1 = int(double(se[k] - zs) * 48 / double(zlen));
+                for (int b = std::max(0, b0); b < std::min(48, std::max(b1, b0 + 1)); b++) brk[b] = std::max<uint8_t>(brk[b], 1);
+                if (b0 >= 0 && b0 < 48) brk[b0] = 2;
+            }
+            for (auto &h : a->hits)
+                if (h.at >= zs && h.at < ze && h.strength >= thr) { hit[std::min<int64_t>(47, (h.at - zs) * 48 / zlen)] = 1; nh++; }
+        } else if (a) {
             nb = slices ? make_slices(*a, s.slice_by.load(), s.slice_count.load(), zs, ze, ss, se) : break_count(*a, by, zs, ze);
             for (int k = 0; k < nb; k++) {
                 int64_t bs, be;
@@ -924,6 +957,32 @@ std::string mb(int64_t bytes) {
     return b;
 }
 
+std::string note_name(int n);
+
+// the BEAT page's top line: what the generator plays
+std::string beat_status(Omni *o) {
+    const Sampler &sm = o->sampler;
+    int mode = int(num(o, "beat_mode") + 0.5f);
+    if (mode == 0) return "BEAT off: keys play as set on the SLICE page";
+    if (!sm.beat_run.load()) {
+        std::string from = note_name(int(num(o, "key_base") + 0.5f));
+        return mode == 1 ? "HOLD: hold a key (" + from + " up = break 1, 2 ...)" : "PLAY: starts with MPC's transport (keys from " + from + " pick the break)";
+    }
+    if (!sm.beat_ln.load()) return "No loop: load a sample (BROWSE)";
+    char b[96], lb[24];
+    float bars = sm.beat_loop_bars.load();
+    if (bars >= 1) std::snprintf(lb, sizeof lb, "%g %s", double(bars), bars == 1 ? "bar" : "bars");
+    else std::snprintf(lb, sizeof lb, "1/%d bar", int(1 / bars + 0.5f));
+    int phr = sm.beat_phr.load(), rt = sm.beat_rt_now.load();
+    std::string tail;
+    if (phr > 0) tail += "   bar " + std::to_string(sm.beat_bar.load()) + "/" + std::to_string(phr);
+    if (sm.beat_fillbar.load()) tail += " FILL";
+    if (rt) tail += "   " + std::to_string(rt) + "x";
+    std::snprintf(b, sizeof b, "%s   slice %d/%d   loop %s%s", sm.beat_on_b.load() ? "B" : "A", sm.beat_slice.load() + 1, sm.beat_n.load(), lb,
+                  tail.c_str());
+    return b;
+}
+
 // MPC's octave numbering: note 60 = C3
 std::string note_name(int n) {
     static const char *names[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -964,6 +1023,11 @@ int get_param(void *inst, const char *key, char *buf, int len) {
         return put(buf, len, key[6] == 'i' ? o->slice_info : o->slice_active);
     }
     if (!std::strcmp(key, "key_base_display")) return put(buf, len, note_name(int(num(o, "key_base") + 0.5f)));
+    if (!std::strcmp(key, "beat_b_display")) {
+        int b = int(num(o, "beat_b") + 0.5f);
+        return b ? std::snprintf(buf, size_t(len), "Break %d", b) : put(buf, len, "Off");
+    }
+    if (!std::strcmp(key, "beat_status")) return put(buf, len, beat_status(o));
     if (!std::strcmp(key, "region_display")) {
         int r = int(num(o, "region") + 0.5f);
         return r ? std::snprintf(buf, size_t(len), "Break %d", r) : put(buf, len, "All");

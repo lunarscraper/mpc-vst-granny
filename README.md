@@ -4,7 +4,7 @@ A granular sampler for the MPC OS standalone hardware (Force, MPC Live/One/X/Key
 S-4's sculpting sampler. It is built on **[Omni Sampler](https://github.com/B0ss-M/MrHighMan) by MR HighMan**: every
 instrument Omni Sampler reads (Akai, E-mu, Roland, Kontakt/Maschine, SF2, SFZ, WAV/AIFF/FLAC/Ogg, and the disk images
 they came on) becomes material for grains. It keeps Omni Sampler's pages (PLAY, LAYERS, BROWSE, SETUP, MOD, INFO) and
-adds a **GRAIN** page with two things, and a **SLICE** page (below) that finds the breaks and hits in a sample:
+adds a **GRAIN** page with two things, a **SLICE** page (below) that finds the breaks and hits in a sample, and a **BEAT** page that turns a break into an endless, varied breakbeat:
 
 - **Grain engine** (ENGINE: GRANULAR): every note plays a cloud of grains from its zone's sample instead of one
   playhead. Keys pitch the grains, and the cloud runs through the voice's envelope, filters, LFOs and mod matrix like a
@@ -109,6 +109,28 @@ unusual patterns) and pick 1, 2 or 4 BARS to match how long the breaks are.
 Granny is an instrument plugin: MPC gives instrument plugins no audio input, so it cannot record or process live
 audio. For a granular effect on a track's audio, the catalog has effect plugins (Boris Granular, Overcast). The grain
 engine reads the loaded instrument; GRAIN FX processes what the plugin itself plays.
+
+## BEAT page
+
+A break generator after mestela's [schwung-breakbeat](https://github.com/mestela/schwung-breakbeat) (Breakbeat for Ableton Move): the loop is cut into STEPS slices, and on every step it plays either the slice that belongs there or a different one, chosen by a few knobs. Jungle, DnB and breakbeat: the break keeps its backbone while it rolls, stutters and opens up into fills. It is a new implementation written from that module's description (its README), not its code.
+
+| Control | What it does |
+|---|---|
+| MODE | OFF: keys play as set on the SLICE page. HOLD: the generator runs while a key is held. PLAY: it runs while MPC plays (starts and stops with the transport) |
+| keys | from KEY BASE (SLICE page) up: key 1 = break 1, key 2 = break 2 ... (a pack of breaks: the pads choose the A loop live). A key past the last break uses REGION (0 = the whole sample, or its one break). In BEAT mode keys make no sound of their own |
+| STEPS | 8, 16 or 32 slices: an even grid over the loop, each cut moved onto the hit right next to it |
+| LOOP LENGTH | the loop's length in bars (1/4 ... 8). AUTO: the length that plays it closest to its own speed at MPC's tempo |
+| COMPLEXITY | how often a step plays a random slice instead of its own. 0 = the break as recorded |
+| ANCHOR | keeps the bar's structural steps in place: at 100 the steps on beats 1 and 3 are never swapped, the bar's last eighth more often than the rest |
+| ROLL | sticks to the slice just played: repeats, walks to a neighbour, now and then a jump ahead (the rolling "1 2 3 1 2 3 4 5" and held-slice stutters) |
+| FILL | the last bar of each phrase: COMPLEXITY up, ROLL and ANCHOR down (100 = anything goes). Needs PHRASE |
+| RETRIG 2x / 3x / 4x / 8x | the share of bars that get a stutter of that rate on a beat: 2x eighths, 3x eighth triplets, 4x sixteenths, 8x 32nds. 100 % = every beat. Several at once: one of them per beat |
+| PHRASE | 2, 4, 8 or 16 bars: the phrase whose last bar is the fill bar |
+| B BREAK / B CHANCE | the fill bar plays another break (B loop) with that chance; OFF = the A loop. Back to A on the next downbeat |
+
+ENGINE decides the sound: SAMPLER plays each slice sped up or slowed down to MPC's tempo (classic jungle repitch, TRANSPOSE on top), GRANULAR plays it as grains that scan the slice in one step at their own pitch (SIZE, DENSITY, SPRAY, PATTERN all apply). The top line shows what plays (`A   slice 3/8   loop 1 bar   bar 4/4 FILL   4x`), the strip the loop's slices with the one playing in orange. Every start (a key in HOLD, play in PLAY) is a new variation. Q-Links: COMPLEXITY, ANCHOR, ROLL, FILL, RETRIG 2x/3x/4x/8x.
+
+Starting points: **calm** COMPLEXITY 15, ANCHOR 90, ROLL 10, FILL 40, RETRIG 2x 10; **mid** (the defaults) 30 / 80 / 30 / 60, 2x and 4x 10; **frantic** 70 / 40 / 60 / 100, 2x 30, 4x 30, 8x 15, PHRASE 2.
 
 ## Formats
 
@@ -248,7 +270,7 @@ parameters instead, so it builds against the public wrapper as it is.
 
 LGPL-3.0-or-later, like Omni Sampler. Granny is a modified version of Omni Sampler 1.4.0 by MR HighMan
 (https://github.com/B0ss-M/MrHighMan): the grain engine, GRAIN FX, the GRAIN page, the new modulation destinations and
-the DRIFT wave, the SLICE page and its analysis are additions; the format readers, browser, layers and the rest of the engine are Omni Sampler's. The
+the DRIFT wave, the SLICE page and its analysis, and the BEAT page are additions (BEAT follows the design of mestela's [schwung-breakbeat](https://github.com/mestela/schwung-breakbeat), reimplemented from its description: the knob set, the slice-choice rules and its anchor curve); the format readers, browser, layers and the rest of the engine are Omni Sampler's. The
 format readers are C++ translations of [ConvertWithMoss](https://github.com/git-moss/ConvertWithMoss) by Jürgen
 Moßgraber (LGPL-3.0); keep this attribution and the included [LGPL-3.0.txt](LGPL-3.0.txt) and [GPL-3.0.txt](GPL-3.0.txt)
 when distributing it. Bundled libraries keep their own licences: dr_flac (public domain / MIT-0), stb_vorbis (public

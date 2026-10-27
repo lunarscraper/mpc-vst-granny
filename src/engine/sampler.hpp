@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 #include "../core/model.hpp"
+#include "beat.hpp"
 #include "dsp.hpp"
 #include "slicer.hpp"
 
@@ -83,7 +84,20 @@ struct Settings {
     // key mode 4 (slices): the sample cut into slice_count slices (slice_by 0 at the strongest hits, 1 on a grid)
     std::atomic<int> slice_count{16}, slice_by{1};
     std::atomic<float> hit_thr{1.5f};
+    // BEAT: the break generator (beat.hpp). mode 0 off, 1 hold (runs while a key is held), 2 play (runs while MPC
+    // plays). Keys from key_base pick the break (A loop) when the sample has it, else REGION (0 = the whole sample).
+    // steps: slices of the loop (8/16/32); bars: beat_bars index (BEAT_BARS, 0 = from the detected tempo);
+    // complexity, anchor, roll, fill 0..1; rt[4] per-bar odds of a 2x/3x/4x/8x stutter; phrase BEAT_PHRASES index;
+    // b_break 0 = no B loop, n = break n plays the fill bar with b_chance odds
+    std::atomic<int> beat_mode{0}, beat_steps{8}, beat_bars{0}, beat_phrase{2}, beat_b{0};
+    std::atomic<float> beat_cplx{0.3f}, beat_anchor{0.8f}, beat_roll{0.3f}, beat_fill{0.6f}, beat_bchance{0.5f};
+    std::atomic<float> beat_rt[4]{};
 };
+
+constexpr double BEAT_BARS[] = {0, 0.25, 0.5, 1, 2, 4, 8};
+constexpr int BEAT_BARS_COUNT = int(sizeof BEAT_BARS / sizeof BEAT_BARS[0]);
+constexpr int BEAT_PHRASES[] = {0, 2, 4, 8, 16};
+constexpr int BEAT_PHRASE_COUNT = int(sizeof BEAT_PHRASES / sizeof BEAT_PHRASES[0]);
 
 constexpr double SCAN_FIT_BARS[] = {0, 0.5, 1, 2, 4, 8};
 constexpr int SCAN_FIT_COUNT = int(sizeof SCAN_FIT_BARS / sizeof SCAN_FIT_BARS[0]);
@@ -149,6 +163,13 @@ public:
     std::atomic<uint32_t> last_zone_prog{0}, layer_events{0};
     std::atomic<uint8_t> key_down[128]{};   // keys held (any channel): the skin's pad lights
     std::atomic<float> slowest_attack{0};   // the program's longest delay + attack + hold (s): how long a pad tap holds
+    // BEAT readouts (audio thread writes): running, A/B, slice, steps, bar in phrase, phrase, stutter rate, fill bar
+    std::atomic<int> beat_run{0}, beat_on_b{0}, beat_slice{0}, beat_n{0}, beat_bar{0}, beat_phr{0}, beat_rt_now{0}, beat_fillbar{0};
+    std::atomic<float> beat_loop_bars{0};
+    // the loop's slices for the displays: zone, count, starts (beat_ls[0..n-1]) and its end (beat_ls[n])
+    std::atomic<int> beat_lzone{-1}, beat_ln{0};
+    std::atomic<uint32_t> beat_lprog{0};
+    std::atomic<int64_t> beat_ls[BEAT_MAX_STEPS + 1]{};
 
 private:
     struct Voice {
@@ -185,6 +206,11 @@ private:
         float gfix = 0;                                   // slice modes: the position the key chose (share of the region)
         double fit_bars = 0;                              // SCAN FIT: bars for one pass through the region (0 = SCAN)
         bool touch = false;                               // started by a tap on the waveform
+        // BEAT voices: start delay and choke point (samples into the current block, -1 none), and the loop's sample
+        // frames per beat (sampler engine: the slice is sped up or slowed down to the song's tempo; 0 = off)
+        bool beat = false;
+        int delay = 0, choke_in = -1;
+        double fpb = 0;
     };
 
     std::atomic<Program *> pending_{nullptr}, retired_{nullptr};
@@ -249,6 +275,31 @@ private:
     Voice *alloc_voice();
     void all_off(bool hard);
     void render_voice(Voice &v, float *l, float *r, int n);
+    void render_span(Voice &v, float *l, float *r, int frames);   // a block, honouring delay and choke_in
+
+    // BEAT (audio thread)
+    struct BeatLoop {
+        bool ok = false;
+        int zi = -1, n = 0;
+        int64_t s[BEAT_MAX_STEPS + 1] = {};   // slice starts; s[n] = the loop's end
+        double beats = 4;                     // the loop's length in quarter notes
+        double fpb = 0;                       // sample frames per beat
+    };
+    BeatLoop beat_a_, beat_b_;
+    BeatRng beat_rng_;
+    bool beat_running_ = false, beat_use_b_ = false, beat_fill_ = false;
+    double beat_next_ = 0, beat_expect_ = -1, beat_free_ = 0, beat_fill_start_ = 0;
+    int beat_cur_ = -1, beat_rt_ = 0, beat_rt_slice_ = -1, beat_vel_ = 100;
+    long beat_rt_beat_ = -1;
+    int beat_keys_[16] = {}, beat_nkeys_ = 0;   // keys held in hold mode (newest last)
+    int beat_key_ = -1;                          // the key choosing the break (-1 = REGION)
+    void beat_note_on(int note, int vel);
+    void beat_note_off(int note);
+    void beat_block(int frames);
+    double beat_event(double t, int offset, bool first);   // returns the next event's time
+    void beat_stop();
+    bool beat_build(BeatLoop &L, int brk);       // brk -1: the key's break or REGION; else that break (0-based)
+    void beat_trigger(const BeatLoop &L, int slice, int offset);
     void render_grains(Voice &v, float *l, float *r, int n);
     void spawn_grain(Voice &v, double step, float spray, float size_mul, float pitch_semis);
     void block_mod(Voice &v, int n, double &step, float &cutoff_mul);

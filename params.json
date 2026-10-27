@@ -4148,6 +4148,166 @@
    ],
    "default": 1,
    "live": true
+  },
+  {
+   "key": "beat_mode",
+   "name": "Beat Mode",
+   "options": [
+    "Off",
+    "Hold",
+    "Play"
+   ],
+   "default": 0,
+   "live": true
+  },
+  {
+   "key": "beat_steps",
+   "name": "Beat Steps",
+   "options": [
+    "8",
+    "16",
+    "32"
+   ],
+   "default": 0,
+   "live": true
+  },
+  {
+   "key": "beat_bars",
+   "name": "Beat Loop",
+   "options": [
+    "Auto",
+    "1/4 Bar",
+    "1/2 Bar",
+    "1 Bar",
+    "2 Bars",
+    "4 Bars",
+    "8 Bars"
+   ],
+   "default": 0,
+   "live": true
+  },
+  {
+   "key": "beat_cplx",
+   "name": "Complexity",
+   "min": 0,
+   "max": 100,
+   "default": 30,
+   "unit": "%",
+   "display": "int",
+   "live": true
+  },
+  {
+   "key": "beat_anchor",
+   "name": "Anchor",
+   "min": 0,
+   "max": 100,
+   "default": 80,
+   "unit": "%",
+   "display": "int",
+   "live": true
+  },
+  {
+   "key": "beat_roll",
+   "name": "Roll",
+   "min": 0,
+   "max": 100,
+   "default": 30,
+   "unit": "%",
+   "display": "int",
+   "live": true
+  },
+  {
+   "key": "beat_fill",
+   "name": "Fill",
+   "min": 0,
+   "max": 100,
+   "default": 60,
+   "unit": "%",
+   "display": "int",
+   "live": true
+  },
+  {
+   "key": "beat_rt2",
+   "name": "Retrig 2x",
+   "min": 0,
+   "max": 100,
+   "default": 10,
+   "unit": "%",
+   "display": "int",
+   "live": true
+  },
+  {
+   "key": "beat_rt3",
+   "name": "Retrig 3x",
+   "min": 0,
+   "max": 100,
+   "default": 0,
+   "unit": "%",
+   "display": "int",
+   "live": true
+  },
+  {
+   "key": "beat_rt4",
+   "name": "Retrig 4x",
+   "min": 0,
+   "max": 100,
+   "default": 10,
+   "unit": "%",
+   "display": "int",
+   "live": true
+  },
+  {
+   "key": "beat_rt8",
+   "name": "Retrig 8x",
+   "min": 0,
+   "max": 100,
+   "default": 0,
+   "unit": "%",
+   "display": "int",
+   "live": true
+  },
+  {
+   "key": "beat_phrase",
+   "name": "Beat Phrase",
+   "options": [
+    "Off",
+    "2",
+    "4",
+    "8",
+    "16"
+   ],
+   "default": 2,
+   "live": true
+  },
+  {
+   "key": "beat_b",
+   "name": "B Break",
+   "min": 0,
+   "max": 64,
+   "default": 0,
+   "display": "int",
+   "dynamic_display": true,
+   "live": true
+  },
+  {
+   "key": "beat_bchance",
+   "name": "B Chance",
+   "min": 0,
+   "max": 100,
+   "default": 50,
+   "unit": "%",
+   "display": "int",
+   "live": true
+  },
+  {
+   "key": "beat_status",
+   "name": "Beat Status",
+   "min": 0,
+   "max": 0,
+   "default": 0,
+   "display": "string",
+   "type": "readout",
+   "live": true
   }
  ]
 }

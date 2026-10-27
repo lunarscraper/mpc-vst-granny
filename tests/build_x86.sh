@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the desktop test tools (x86, ASan/UBSan): build/x86/probe, build/x86/test_engine and build/x86/grain_render.
+# Build the desktop test tools (x86, ASan/UBSan): build/x86/probe, test_engine, grain_render, slice_probe and test_beat.
 #   MPC_VST=/path/to/mpc-vst-plugins tests/build_x86.sh [--fast]   (--fast: -O2, no sanitizers)
 set -euo pipefail
 PORT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,3 +34,5 @@ g++ "${FLAGS[@]}" "${WARN[@]}" -I"$PORT/src" -I"$MV/wrapper" "$PORT/tests/grain_
 echo "built $OUT/grain_render"
 g++ "${FLAGS[@]}" "${WARN[@]}" -I"$PORT/src" "$PORT/tests/slice_probe.cpp" "${OBJS[@]}" -lpthread -o "$OUT/slice_probe"
 echo "built $OUT/slice_probe"
+g++ "${FLAGS[@]}" "${WARN[@]}" -I"$PORT/src" "$PORT/tests/test_beat.cpp" -o "$OUT/test_beat"
+echo "built $OUT/test_beat"

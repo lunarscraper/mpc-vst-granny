@@ -1,6 +1,6 @@
 // Granny: offline render through mpc_engine(), for listening to the granular engine and GRAIN FX and for a rough
 // CPU figure on the desktop.
-//   grain_render <instrument> <out.wav> [key=value ...] [notes=60,67] [secs=6] [hold=4] [bpm=120] [play=1]
+//   grain_render <instrument> <out.wav> [key=value ...] [notes=60,67] [secs=6] [hold=4] [bpm=120] [play=1] [trace=1]
 // key=value pairs are plugin parameters in their own units (e.g. engine=1 g_scan=50 fx_mix=40 fx_mode=2).
 #include <chrono>
 #include <cmath>
@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
     e->set_param(inst, "state", state.c_str());
     std::vector<int> notes = {60};
     double secs = 6, hold = 4, bpm = 120;
-    bool play = false;
+    bool play = false, trace = false;
     for (int i = 3; i < argc; i++) {
         std::string a = argv[i];
         size_t eq = a.find('=');
@@ -44,6 +44,7 @@ int main(int argc, char **argv) {
         else if (k == "hold") hold = std::atof(v.c_str());
         else if (k == "bpm") bpm = std::atof(v.c_str());
         else if (k == "play") play = std::atoi(v.c_str()) != 0;
+        else if (k == "trace") trace = std::atoi(v.c_str()) != 0;   // print the BEAT page's status every beat
         else e->set_param(inst, k.c_str(), v.c_str());
     }
     char b[32];
@@ -76,6 +77,8 @@ int main(int argc, char **argv) {
         worst = std::max(worst, us);
         total += us;
         out.insert(out.end(), buf.begin(), buf.end());
+        if (trace && k % int(44100 * 60.0 / bpm / 128) == 0)
+            std::printf("  %6.2f s  %s\n", k * 128 / 44100.0, get(e, inst, "beat_status").c_str());
         if (k == hold_blocks / 2) status_mid = get(e, inst, "status") + " | " + get(e, inst, "slice_info") + " | " + get(e, inst, "slice_active");
     }
     double sum = 0;

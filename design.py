@@ -76,6 +76,13 @@ SLICE_BY = ["Hits", "Grid"]   # sampler.hpp slice_by: 0 strongest hits, 1 even g
 KEY_COUNTS = ["8", "16", "32", "64"]
 BREAK_BY = ["Auto", "Gaps", "1 Bar", "2 Bars", "4 Bars"]
 SCAN_FIT = ["Off", "1/2 Bar", "1 Bar", "2 Bars", "4 Bars", "8 Bars"]
+# BEAT page (plugin.cpp NUM_PARAMS, sampler.hpp BEAT_BARS / BEAT_PHRASES)
+BEAT_MODES = ["Off", "Hold", "Play"]
+BEAT_STEPS = ["8", "16", "32"]
+BEAT_BARS = ["Auto", "1/4 Bar", "1/2 Bar", "1 Bar", "2 Bars", "4 Bars", "8 Bars"]
+BEAT_PHRASES = ["Off", "2", "4", "8", "16"]
+BEAT_KEYS = {"beat_mode", "beat_steps", "beat_bars", "beat_cplx", "beat_anchor", "beat_roll", "beat_fill", "beat_rt2", "beat_rt3",
+             "beat_rt4", "beat_rt8", "beat_phrase", "beat_b", "beat_bchance"}
 # plugin.cpp NUM_PARAMS defaults: ready-made routings, all at amount 0
 MOD_DEFAULTS = [(1, 1), (2, 2), (3, 2), (6, 2), (8, 5), (7, 2), (4, 4), (1, 4)]
 
@@ -236,9 +243,25 @@ def params():
     num("slice_count", "Slices", 1, 64, 16)
     trigger("key_learn", "Learn Key Base")
     add("slice_by", "Slice By", options=SLICE_BY, default=1)
+    # Granny 1.1: the BEAT page (a break generator after mestela's schwung-breakbeat)
+    add("beat_mode", "Beat Mode", options=BEAT_MODES, default=0)
+    add("beat_steps", "Beat Steps", options=BEAT_STEPS, default=0)
+    add("beat_bars", "Beat Loop", options=BEAT_BARS, default=0)
+    num("beat_cplx", "Complexity", 0, 100, 30, "%")
+    num("beat_anchor", "Anchor", 0, 100, 80, "%")
+    num("beat_roll", "Roll", 0, 100, 30, "%")
+    num("beat_fill", "Fill", 0, 100, 60, "%")
+    num("beat_rt2", "Retrig 2x", 0, 100, 10, "%")
+    num("beat_rt3", "Retrig 3x", 0, 100, 0, "%")
+    num("beat_rt4", "Retrig 4x", 0, 100, 10, "%")
+    num("beat_rt8", "Retrig 8x", 0, 100, 0, "%")
+    add("beat_phrase", "Beat Phrase", options=BEAT_PHRASES, default=2)
+    add("beat_b", "B Break", min=0, max=64, default=0, display="int", dynamic_display=True)
+    num("beat_bchance", "B Chance", 0, 100, 50, "%")
+    text("beat_status", "Beat Status")
     # settings an extracted instrument restores reach MPC's controls through the live polling
     for p in P:
-        if p["key"] in SOUND_KEYS or p["key"] in GRAIN_KEYS:
+        if p["key"] in SOUND_KEYS or p["key"] in GRAIN_KEYS or p["key"] in BEAT_KEYS:
             p["live"] = True
     return {"name": "Granny", "params": P}
 
@@ -1087,6 +1110,77 @@ def slice_layout(L):
     L.append("")
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# BEAT page: the break generator. The loop (its slices on the strip, the one playing in orange), the switches, and the
+# eight performance knobs plus the B loop's two
+
+BT_DISP = (16, 66, 1248, 232)
+BT_X0, BT_STEP, BT_WAVE_CY, BT_BRK_Y, BT_HIT_Y = 76, 24.2, 186, 262, 282
+BT_PANEL = (16, 310, 1248, 310)
+BT_ROW_Y, BT_KNOB_Y = 376, 516
+BT_KNOBS = [(76, "beat_cplx", "COMPLEXITY", CYAN), (200, "beat_anchor", "ANCHOR", BLUE), (324, "beat_roll", "ROLL", VIOLET),
+            (448, "beat_fill", "FILL", ORANGE),
+            (584, "beat_rt2", "2x", GREEN), (708, "beat_rt3", "3x", GREEN), (832, "beat_rt4", "4x", GREEN), (956, "beat_rt8", "8x", GREEN),
+            (1092, "beat_b", "B BREAK", VIOLET), (1206, "beat_bchance", "B CHANCE", VIOLET)]
+BT_GROUPS = [(262, "GROOVE"), (770, "RETRIG  (share of bars)"), (1149, "B LOOP  (fill bar)")]
+BT_SEGS = [("beat_mode", BEAT_MODES, 76, 116, 110, "MODE"), ("beat_steps", BEAT_STEPS, 450, 76, 72, "STEPS"),
+           ("beat_phrase", BEAT_PHRASES, 720, 70, 66, "PHRASE (BARS)")]   # key, options, first cx, spacing, width, caption
+
+
+def bg_beat():
+    c = Canvas(W, H, BG + (255,))
+    topbar(c)
+    c.rrect(16, 10, 376, 36, 7, fill=(34, 40, 49), outline=(64, 74, 88), width=1.2)
+    for k in range(3):
+        c.line([(28, 21 + k * 7), (42, 21 + k * 7)], INK_DIM, 2)
+    x, yy, w, h = BT_DISP
+    c.grad(x, yy, w, h, 12, (30, 40, 52), (18, 24, 32), outline=(70, 84, 102), width=1.5)
+    c.rrect(x + 14, yy + 10, w - 28, 34, 7, fill=(14, 20, 28, 210), outline=(70, 110, 140, 160), width=1)
+    c.line([(BT_X0 - 12, BT_WAVE_CY), (BT_X0 + 47 * BT_STEP + 12, BT_WAVE_CY)], (120, 200, 240, 90), 1)
+    for label, yv in (("SLICES", BT_BRK_Y), ("HITS", BT_HIT_Y)):
+        c.text(x + 8, yv, label, 9, (110, 150, 180), "SemiBold", "lm")
+    x, yy, w, h = BT_PANEL
+    panel(c, x, yy, w, h)
+    for key, opts, cx0, step, sw, cap in BT_SEGS:
+        c.text(cx0 + step * (len(opts) - 1) / 2, BT_ROW_Y - 34, cap, 15, INK_DIM, "SemiBold")
+    c.text(1160, BT_ROW_Y - 34, "LOOP LENGTH", 15, INK_DIM, "SemiBold")
+    c.line([(x + 14, 420), (x + w - 14, 420)], (12, 15, 19, 200), 1.5)
+    c.line([(x + 14, 421.5), (x + w - 14, 421.5)], (80, 90, 104, 80), 1)
+    for gx, title in BT_GROUPS:
+        c.text(gx, 444, title, 14, (110, 150, 180), "SemiBold")
+    for xv in (516, 1024):
+        c.line([(xv, 436), (xv, 604)], (70, 80, 95, 140), 1)
+    for cx, key, label, col in BT_KNOBS:
+        c.text(cx, BT_KNOB_Y - 50, label, 15, INK_DIM, "SemiBold")
+    c.save("bg_beat")
+
+
+def beat_layout(L):
+    L.append("[tab BEAT]")
+    L.append("art file=art/bg_beat.png x=0 y=%d w=1280 h=628 fit=stretch" % Y_OFF)
+    header_lines(L)
+    L.append('button cx=74 cy=%d label="" key=prog_prev img=art/prog_prev_off.png img_on=art/prog_prev_on.png w=38 h=30' % y(28))
+    L.append('readout cx=222 cy=%d w=240 h=32 label="" key=prog_name text_size=16' % y(28))
+    L.append('button cx=368 cy=%d label="" key=prog_next img=art/prog_next_off.png img_on=art/prog_next_on.png w=38 h=30' % y(28))
+    x, yy, w, h = BT_DISP
+    L.append('readout cx=%d cy=%d w=%d h=32 label="" key=beat_status text_size=18' % (x + w // 2, y(yy + 27), w - 60))
+    for b in range(WAVE_BARS):
+        bx = round(BT_X0 + b * BT_STEP)
+        L.append('meter cx=%d cy=%d w=%d h=%d key=wave_%d strip=art/wave_bar.png frames=128' % (bx, y(BT_WAVE_CY), WAVE_W, WAVE_H, b + 1))
+        L.append('meter cx=%d cy=%d w=25 h=16 key=sbrk_%d strip=art/sbrk.png frames=128' % (bx, y(BT_BRK_Y), b + 1))
+        L.append('meter cx=%d cy=%d w=25 h=14 key=shit_%d strip=art/shit.png frames=128' % (bx, y(BT_HIT_Y), b + 1))
+    for key, opts, cx0, step, sw, _ in BT_SEGS:
+        for i, opt in enumerate(opts):
+            L.append('option cx=%d cy=%d w=%d h=44 key=%s option="%s" label="" img=art/clear.png img_on=art/clear.png'
+                     % (cx0 + i * step, y(BT_ROW_Y), sw, key, opt))
+    L.append('popup cx=1160 cy=%d w=170 h=44 label="" key=beat_bars text_size=18' % y(BT_ROW_Y))
+    for cx, key, _, col in BT_KNOBS:
+        L.append(knob_line(cx, BT_KNOB_Y, 32, key, col, 104) + " bw=104")
+    # Q-Links: the eight performance knobs (switches stay on the touchscreen)
+    L.append('qlinks "BEAT" = beat_cplx,beat_anchor,beat_roll,beat_fill,beat_rt2,beat_rt3,beat_rt4,beat_rt8')
+    L.append("")
+
+
 def clear_image():
     Image.new("RGBA", (4, 4), (0, 0, 0, 0)).save(os.path.join(ART, "clear.png"))
 
@@ -1110,6 +1204,7 @@ def images():
     grain_images()
     bg_slice()
     slice_images()
+    bg_beat()
     strip_wave("wave_bar", WAVE_W, WAVE_H)
     strip_states("ptile", PTILE_W, 16, 3, draw_ptile)
     strip_states("ltile", LT_W, LT_H, 16, draw_ltile)
@@ -1219,6 +1314,7 @@ def layout():
 
     grain_layout(L)
     slice_layout(L)
+    beat_layout(L)
 
     # LAYERS
     L.append("[tab LAYERS]")
@@ -1345,7 +1441,7 @@ def layout():
 
 
 # segment labels where the option names don't fit their segment (same count and order as the options)
-SHORT_OPTS = {"lfo1_wave": "SINE,TRI,SAW+,SAW-,SQR,S&H,DRIFT", "voice_mode": "POLY,MONO,LEG", "interp": "OFF,LIN,CUB",
+SHORT_OPTS = {"beat_mode": "OFF,HOLD,PLAY", "lfo1_wave": "SINE,TRI,SAW+,SAW-,SQR,S&H,DRIFT", "voice_mode": "POLY,MONO,LEG", "interp": "OFF,LIN,CUB",
               "fx_lock": "OFF,LOCK"}
 
 
@@ -1386,7 +1482,7 @@ def options_to_enums(lines):
 
 CSS = """/* Granny: the renderer draws only controls; panels, labels and the display are art/bg_*.png. */
 /* option segments: text small enough for the narrow ones (PLAY page's POLY / MONO / LEG, LFO waves) */
-:root { --seg-size: 11.5px; }
+:root { --seg-size: 13px; }
 .seg-tx { letter-spacing: 0.02em; }
 .box, .box-label { display: none; }
 /* pad numbers on the pad images */

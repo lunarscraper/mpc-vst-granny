@@ -1,6 +1,6 @@
 /* Granny: the renderer draws only controls; panels, labels and the display are art/bg_*.png. */
 /* option segments: text small enough for the narrow ones (PLAY page's POLY / MONO / LEG, LFO waves) */
-:root { --seg-size: 11.5px; }
+:root { --seg-size: 13px; }
 .seg-tx { letter-spacing: 0.02em; }
 .box, .box-label { display: none; }
 /* pad numbers on the pad images */

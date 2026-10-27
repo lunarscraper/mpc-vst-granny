@@ -1,5 +1,7 @@
 Granny - LGPL-3.0-or-later. A modified version of Omni Sampler 1.4.0 by MR HighMan
-(https://github.com/B0ss-M/MrHighMan): granular engine, GRAIN FX and GRAIN page added.
+(https://github.com/B0ss-M/MrHighMan): granular engine, GRAIN FX and GRAIN page added; SLICE and BEAT pages added.
+The BEAT page's break generator follows the design of schwung-breakbeat by mestela
+(https://github.com/mestela/schwung-breakbeat), reimplemented from its README; none of its code is used.
 
 Omni Sampler by MR HighMan - LGPL-3.0-or-later.
 Source: https://github.com/B0ss-M/MrHighMan

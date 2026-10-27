@@ -169,6 +169,7 @@ void Sampler::note_on(int chan, int note, int vel) {
         int ks = settings.ks_base.load();
         if (note >= ks && note < ks + 4) { active_slot.store(note - ks); return; }
     }
+    if (settings.beat_mode.load() != 0) { beat_note_on(note, vel); return; }   // BEAT: keys choose the break
     if (!prog_ || swap_fade_) return;
 
     int mode = settings.voice_mode.load();
@@ -227,6 +228,7 @@ void Sampler::note_off(int chan, int note) {
         v.released = true;
         v.amp.release(); v.fenv.release(); v.penv.release();
     }
+    if (settings.beat_mode.load() != 0) { beat_note_off(note); return; }
     if (!prog_ || swap_fade_) return;
     // release triggers
     if (vel == 0) vel = 64;
@@ -599,6 +601,7 @@ void Sampler::render_voice(Voice &v, float *outl, float *outr, int n) {
     double step;
     float cutoff_mul;
     block_mod(v, n, step, cutoff_mul);
+    if (v.fpb > 0) step *= v.fpb * tempo_ / (60.0 * double(v.pcm->rate));   // BEAT: the loop at the song's tempo
     const int ch = v.pcm->channels;
     const int nch = ch > 1 ? 2 : 1;
     if (v.zf[0].on) for (int c = 0; c < nch; c++) v.zf[c].set(float(z.filter.cutoff) * cutoff_mul, std::max(0.0f, std::min(1.0f, float(z.filter.resonance) + v.mod_res)));
@@ -992,6 +995,283 @@ void Sampler::render_fx(float *l, float *r, int frames) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// voices in a block: a BEAT voice may start part-way in (delay) and be choked part-way in (choke_in)
+
+void Sampler::render_span(Voice &v, float *l, float *r, int frames) {
+    int st = 0;
+    if (v.delay > 0) {
+        if (v.delay >= frames) { v.delay -= frames; v.choke_in = -1; return; }
+        st = v.delay;
+        v.delay = 0;
+    }
+    const int ch = v.choke_in;
+    v.choke_in = -1;
+    auto span = [&](int a, int b) { for (int o = a; o < b && v.on; o += 64) render_voice(v, l + o, r + o, std::min(64, b - o)); };
+    auto choke = [&] { if (v.on) { v.released = v.fading = true; v.amp.fast_release(0.003f); } };
+    if (ch >= 0 && ch < st) { choke(); span(st, frames); }
+    else if (ch >= st && ch < frames) { span(st, ch); choke(); span(ch, frames); }
+    else span(st, frames);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// BEAT: the break generator. A loop (the break a key picks, or REGION) is cut into STEPS slices on an even grid
+// snapped to its hits; every step of the song (or of a free clock from the key) plays one slice, chosen by beat.hpp.
+// RETRIG stutters a beat, PHRASE + FILL open up a phrase's last bar, which can also play a B loop (another break).
+
+void Sampler::beat_note_on(int note, int vel) {
+    int k = 0;
+    for (int i = 0; i < beat_nkeys_; i++) if (beat_keys_[i] != note) beat_keys_[k++] = beat_keys_[i];
+    beat_nkeys_ = k;
+    if (beat_nkeys_ < 16) beat_keys_[beat_nkeys_++] = note;
+    beat_key_ = note;
+    beat_vel_ = std::max(1, vel);
+}
+
+void Sampler::beat_note_off(int note) {
+    int k = 0;
+    for (int i = 0; i < beat_nkeys_; i++) if (beat_keys_[i] != note) beat_keys_[k++] = beat_keys_[i];
+    beat_nkeys_ = k;
+    // hold: back to the break of the key still held last; play: the last key keeps its break
+    if (settings.beat_mode.load() == 1 && beat_nkeys_ > 0) beat_key_ = beat_keys_[beat_nkeys_ - 1];
+}
+
+void Sampler::beat_stop() {
+    for (auto &v : voices_) {
+        if (!v.on || !v.beat || v.released) continue;
+        if (v.delay > 0) { v.on = false; continue; }   // not started yet
+        v.choke_in = -1;
+        v.released = true;
+        v.amp.release(); v.fenv.release(); v.penv.release();
+    }
+    beat_running_ = false;
+    beat_cur_ = -1;
+    beat_rt_ = 0;
+    beat_run.store(0);
+}
+
+bool Sampler::beat_build(BeatLoop &L, int brk) {
+    L.ok = false;
+    if (!prog_) return false;
+    const int base = settings.key_base.load();
+    const int key = std::max(0, std::min(127, beat_key_ >= 0 ? beat_key_ : base));
+    // the zone: the key's first sounding one, else the first with audio
+    int zi = -1;
+    for (int z : prog_->by_key[size_t(key)])
+        if (prog_->pcm[size_t(z)] && slot_plays(prog_->inst.zones[size_t(z)], key)) { zi = z; break; }
+    if (zi < 0)
+        for (size_t i = 0; i < prog_->pcm.size(); i++)
+            if (prog_->pcm[i] && prog_->pcm[i]->frames() > 0) { zi = int(i); break; }
+    if (zi < 0) return false;
+    const Zone &z = prog_->inst.zones[size_t(zi)];
+    const Pcm *pcm = prog_->pcm[size_t(zi)].get();
+    const Analysis *a = zi < int(prog_->ana.size()) ? prog_->ana[size_t(zi)].get() : nullptr;
+    const int64_t frames = pcm->frames();
+    const int64_t ze = z.stop > 0 ? std::min<int64_t>(z.stop, frames) : frames, zs = std::max<int64_t>(0, std::min<int64_t>(z.start, ze));
+    int64_t rs = zs, re = ze;
+    if (a) {
+        const int by = settings.break_by.load();
+        const int nb = break_count(*a, by, zs, ze);
+        int k = brk;
+        if (k < 0) {
+            int kk = beat_key_ >= 0 ? beat_key_ - base : -1, region = settings.region.load();
+            if (kk >= 0 && kk < nb) k = kk;                         // the key's break
+            else if (region > 0 && region <= nb) k = region - 1;    // REGION
+            else if (nb == 1) k = 0;                                // one break: its range (from the first hit)
+        }
+        if (k >= 0 && k < nb) {
+            int64_t s, e;
+            if (break_range(*a, by, k, zs, ze, s, e)) { rs = s; re = e; }
+        } else if (brk >= 0) return false;                          // no such B break
+    } else if (brk >= 0) return false;
+    const int64_t len = re - rs;
+    const int n = std::max(1, std::min(BEAT_MAX_STEPS, settings.beat_steps.load()));
+    if (len < int64_t(n) * 64) return false;
+    // its length in bars: LOOP, or AUTO = the length that plays it nearest its own speed at the song's tempo
+    const int bi = settings.beat_bars.load();
+    double bars = bi > 0 && bi < BEAT_BARS_COUNT ? BEAT_BARS[bi] : 0;
+    if (bars <= 0) {
+        const double secs = double(len) / double(pcm->rate), song_bar = 240.0 / tempo_;
+        double best = 1e9;
+        bars = 1;
+        for (int i = 1; i < BEAT_BARS_COUNT; i++) {
+            double d = std::fabs(std::log2(secs / (BEAT_BARS[i] * song_bar)));
+            if (d < best - 1e-9) { best = d; bars = BEAT_BARS[i]; }
+        }
+    }
+    L.zi = zi;
+    L.n = n;
+    L.beats = bars * 4;
+    L.fpb = double(len) / L.beats;
+    // an even grid, each cut moved onto the strongest hit near it (a fifth of a step, at most 25 ms; nearer counts more)
+    const double step = double(len) / n;
+    const int64_t reach = std::max<int64_t>(1, std::min<int64_t>(int64_t(step * 0.2), int64_t(0.025 * pcm->rate)));
+    L.s[0] = rs;
+    L.s[n] = re;
+    for (int k = 1; k < n; k++) {
+        int64_t g = rs + int64_t(step * k), f = g;
+        if (a) {
+            float best = 0;
+            auto it = std::lower_bound(a->hits.begin(), a->hits.end(), g - reach, [](const Hit &h, int64_t v) { return h.at < v; });
+            for (; it != a->hits.end() && it->at <= g + reach; ++it) {
+                float sc = it->strength * (1.0f - 0.5f * float(std::llabs(it->at - g)) / float(reach));
+                if (sc > best) { best = sc; f = it->at; }
+            }
+        }
+        L.s[k] = std::min(std::max(f, L.s[k - 1] + 32), re - int64_t(n - k) * 32);
+    }
+    L.ok = true;
+    return true;
+}
+
+void Sampler::beat_trigger(const BeatLoop &L, int slice, int offset) {
+    if (!prog_ || swap_fade_ || !L.ok || slice < 0 || slice >= L.n) return;
+    for (auto &v : voices_) {   // the beat voice playing stops where the new one starts
+        if (!v.on || !v.beat || v.released) continue;
+        if (v.delay >= offset && offset > 0) { v.on = false; continue; }   // started on this very sample
+        if (offset <= 0) { v.released = v.fading = true; v.amp.fast_release(0.003f); v.choke_in = -1; }
+        else if (v.choke_in < 0 || v.choke_in > offset) v.choke_in = offset;
+    }
+    Slice sl;
+    sl.on = true;
+    sl.s = L.s[slice];
+    sl.e = L.s[slice + 1];
+    sl.kind = 4;
+    sl.index = slice;
+    const uint32_t age0 = age_counter_;
+    const int note = std::max(0, std::min(127, beat_key_ >= 0 ? beat_key_ : settings.key_base.load()));
+    start_voice(L.zi, 16, note, beat_vel_, false, 0, &sl);   // channel 16: no MIDI note-off reaches it
+    for (auto &v : voices_) {
+        if (!v.on || v.age <= age0) continue;
+        v.beat = true;
+        v.delay = offset;
+        v.choke_in = -1;
+        if (v.granular) v.fit_bars = L.beats / L.n / 4.0;     // the grains scan the slice in one step, at their pitch
+        else v.fpb = L.fpb;                                     // the slice runs at the song's tempo
+    }
+}
+
+double Sampler::beat_event(double t, int offset, bool first) {
+    const Settings &S = settings;
+    const double eps = 1e-6;
+    const long beat = long(std::floor(t + eps));
+    const bool on_beat = t - double(beat) < eps;
+    const long bar = long(std::floor(t / 4.0 + eps / 4));
+    const bool on_bar = on_beat && beat % 4 == 0;
+    // a phrase's last bar: FILL, and maybe the B loop
+    if (on_bar || first) {
+        int pi = S.beat_phrase.load();
+        int P = pi > 0 && pi < BEAT_PHRASE_COUNT ? BEAT_PHRASES[pi] : 0;
+        beat_fill_ = P > 0 && bar % P == P - 1;
+        beat_use_b_ = beat_fill_ && S.beat_b.load() > 0 && beat_rng_.unit() < S.beat_bchance.load();
+        beat_fill_start_ = double(bar) * 4.0;
+        beat_bar.store(P > 0 ? int(bar % P) + 1 : 0);
+        beat_phr.store(P);
+        beat_fillbar.store(beat_fill_ ? 1 : 0);
+    }
+    if (on_beat) {   // this beat's stutter
+        float rt[4];
+        for (int k = 0; k < 4; k++) rt[k] = S.beat_rt[k].load();
+        beat_rt_ = beat_roll_retrig(beat_rng_, rt, 4);
+        beat_rt_beat_ = beat;
+        beat_rt_slice_ = -1;
+    } else if (first) {
+        beat_rt_ = 0;
+    }
+    // the loop: rebuilt at every event, so keys, settings and a new sample take effect on the next step
+    bool ok_a = beat_build(beat_a_, -1);
+    bool use_b = beat_use_b_ && beat_build(beat_b_, S.beat_b.load() - 1);
+    const BeatLoop &L = use_b ? beat_b_ : beat_a_;
+    const double step = L.ok ? L.beats / L.n : 0.25;
+    const double base = use_b ? beat_fill_start_ : 0.0;   // B starts from its top at the fill bar
+    const double sp = (t - base) / step;
+    const long si = long(std::floor(sp + eps));
+    const bool on_step = sp - double(si) < eps;
+    beat_on_b.store(use_b ? 1 : 0);
+    if (ok_a || use_b) {
+        int n = L.n;
+        beat_n.store(n);
+        beat_loop_bars.store(float(L.beats / 4));
+        beat_lzone.store(L.zi);
+        beat_lprog.store(prog_ ? prog_->serial : 0);
+        for (int k = 0; k <= n; k++) beat_ls[k].store(L.s[k]);
+        beat_ln.store(n);
+        const int natural = int(((si % n) + n) % n);
+        float cx = S.beat_cplx.load(), an = S.beat_anchor.load(), ro = S.beat_roll.load();
+        if (beat_fill_) beat_fill_mod(S.beat_fill.load(), cx, an, ro);
+        float w[BEAT_MAX_STEPS];
+        for (int k = 0; k < n; k++) {
+            double p = double(k) * step;
+            w[k] = beat_weight(p - 4.0 * std::floor(p / 4.0 + eps), an);
+        }
+        if (beat_cur_ >= n) beat_cur_ = -1;
+        auto pick = [&] { beat_cur_ = beat_pick(beat_rng_, n, natural, beat_cur_, w, cx, ro); return beat_cur_; };
+        const bool rt = beat_rt_ > 0 && beat_rt_beat_ == beat;
+        if (rt) {
+            double rp = (t - double(beat)) * beat_rt_;
+            if (rp - std::floor(rp + eps) < eps * beat_rt_ || first) {
+                if (beat_rt_slice_ < 0) beat_rt_slice_ = on_step || first || beat_cur_ < 0 ? pick() : beat_cur_;
+                beat_trigger(L, beat_rt_slice_, offset);
+                beat_slice.store(beat_rt_slice_);
+            }
+        } else if (on_step || first) {
+            beat_trigger(L, pick(), offset);
+            beat_slice.store(beat_cur_);
+        }
+        beat_rt_now.store(rt ? beat_rt_ : 0);
+    } else {
+        beat_ln.store(0);
+    }
+    beat_run.store(1);
+    // the next event: the next step, beat or stutter point
+    double nxt = base + (double(si) + 1) * step;
+    nxt = std::min(nxt, double(beat) + 1);
+    if (beat_rt_ > 0 && beat_rt_beat_ == beat) {
+        double k = std::floor((t - double(beat)) * beat_rt_ + eps) + 1;
+        nxt = std::min(nxt, double(beat) + k / beat_rt_);
+    }
+    return nxt > t + 1e-9 ? nxt : t + step;
+}
+
+void Sampler::beat_block(int frames) {
+    const int mode = settings.beat_mode.load();
+    const bool song = playing_ && ppq_valid_;
+    const bool want = prog_ && !swap_fade_ && (mode == 1 ? beat_nkeys_ > 0 : mode == 2 ? song : false);
+    if (!want) {
+        if (beat_running_) beat_stop();
+        beat_free_ = 0;
+        beat_expect_ = -1;
+        return;
+    }
+    const double bps = tempo_ / 60.0 / SR;   // beats per sample
+    double t0 = song ? block_ppq0_ : beat_free_;
+    bool first = false;
+    if (!beat_running_) {
+        if (!song) t0 = 0;   // the free clock starts with the key
+        beat_running_ = true;
+        first = true;
+        rand_ = rand_ * 1664525u + 1013904223u;
+        beat_rng_.seed(rand_ ^ 0x9E3779B9u);   // a fresh variation at every start
+        beat_cur_ = -1;
+        beat_rt_ = 0;
+        beat_rt_beat_ = -1;
+        beat_next_ = t0;
+    } else if (std::fabs(t0 - beat_expect_) > 1e-6) {   // the song jumped (play, a loop back): pick up from there
+        first = true;
+        beat_rt_ = 0;
+        beat_rt_beat_ = -1;
+        beat_next_ = t0;
+    }
+    const double t1 = t0 + double(frames) * bps;
+    for (int guard = 0; beat_next_ < t1 - 1e-9 && guard < 64; guard++) {
+        int off = std::max(0, std::min(frames - 1, int(std::lrint((beat_next_ - t0) / bps))));
+        beat_next_ = beat_event(beat_next_, off, first);
+        first = false;
+    }
+    beat_expect_ = t1;
+    beat_free_ = t1;
+}
+
 void Sampler::swap_program() {
     Program *next = pending_.load();
     if (!next) return;
@@ -1076,13 +1356,14 @@ void Sampler::render(int16_t *out, int frames) {
     }
     if (touch_gate_ > 0 && (touch_gate_ -= frames) <= 0)
         for (auto &v : voices_) if (v.on && v.touch && !v.released) { v.released = true; v.amp.release(); v.fenv.release(); v.penv.release(); }
+    beat_block(frames);
     int active = 0;
     grains_total_ = 0;
     for (auto &v : voices_) if (v.on && v.granular) grains_total_ += v.ngrains;
     if (prog_)
         for (auto &v : voices_) {
             if (!v.on) continue;
-            for (int o = 0; o < frames && v.on; o += 64) render_voice(v, l + o, r + o, std::min(64, frames - o));
+            render_span(v, l, r, frames);
             if (v.on) active++;
         }
     active_voices.store(active);
